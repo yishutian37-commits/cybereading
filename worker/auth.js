@@ -162,6 +162,14 @@ async function handleRequest(request, env) {
           email: googleUser.email,
           picture: googleUser.picture,
           created_at: new Date().toISOString(),
+          subscription: {
+            tier: 'free', // free, basic, premium, lifetime
+            expiresAt: null
+          },
+          usage: {
+            freeUses: 0,
+            lastReset: Date.now()
+          },
           settings: {
             theme: 'dark'
           }
@@ -203,12 +211,70 @@ async function handleRequest(request, env) {
 
   // === CHAT API (GLM Proxy) ===
   if (path === '/api/chat') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized', requiresAuth: true }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
     try {
       const body = await request.json();
-      const { messages, type } = body;
+      const { messages, type, question } = body;
 
       if (!messages || !Array.isArray(messages)) {
         return new Response(JSON.stringify({ error: 'Invalid messages' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      // Get user profile for subscription info
+      const profile = await getUserProfile(env, user.id);
+      if (!profile) {
+        return new Response(JSON.stringify({ error: 'User profile not found' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      const { subscription, usage } = profile;
+      const now = Date.now();
+
+      // Check if free user has remaining uses (reset weekly)
+      let canUse = false;
+      const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+      let freeUsesRemaining = 0;
+
+      if (subscription.tier === 'free') {
+        // Reset free uses if more than a week has passed
+        if (usage.lastReset && now - usage.lastReset > oneWeekMs) {
+          usage.freeUses = 0;
+          usage.lastReset = now;
+          profile.usage = usage;
+          await saveUserProfile(env, user.id, profile);
+        }
+        freeUsesRemaining = Math.max(0, 1 - usage.freeUses);
+        canUse = freeUsesRemaining > 0;
+      } else if (subscription.tier === 'basic' || subscription.tier === 'premium' || subscription.tier === 'lifetime') {
+        // Check if subscription expired
+        if (subscription.expiresAt && new Date(subscription.expiresAt) < new Date()) {
+          subscription.tier = 'free';
+          subscription.expiresAt = null;
+          profile.subscription = subscription;
+          await saveUserProfile(env, user.id, profile);
+          canUse = usage.freeUses < 1;
+          freeUsesRemaining = Math.max(0, 1 - usage.freeUses);
+        } else {
+          canUse = true;
+          freeUsesRemaining = 999; // Unlimited
+        }
+      }
+
+      if (!canUse) {
+        return new Response(JSON.stringify({
+          error: 'No remaining uses',
+          requiresUpgrade: true,
+          freeUsesRemaining: 0,
+          tier: subscription.tier
+        }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      // Increment usage
+      if (subscription.tier === 'free') {
+        usage.freeUses += 1;
+        profile.usage = usage;
+        await saveUserProfile(env, user.id, profile);
       }
 
       // Call GLM API
@@ -233,14 +299,83 @@ async function handleRequest(request, env) {
       }
 
       const glmData = await glmRes.json();
+      const reply = glmData.choices[0].message.content;
+
+      // Save to history
+      const history = await getUserHistory(env, user.id);
+      history.unshift({
+        id: generateId(),
+        type: type || '易经卜卦',
+        question: question || '',
+        result: reply.substring(0, 200) + (reply.length > 200 ? '...' : ''),
+        timestamp: new Date().toISOString()
+      });
+      // Keep last 100
+      if (history.length > 100) history.splice(100);
+      await saveUserHistory(env, user.id, history);
+
       return new Response(JSON.stringify({
         success: true,
-        reply: glmData.choices[0].message.content,
-        usage: glmData.usage
+        reply: reply,
+        usage: glmData.usage,
+        freeUsesRemaining: subscription.tier === 'free' ? Math.max(0, 1 - usage.freeUses) : 999
       }), { headers: { 'Content-Type': 'application/json' } });
 
     } catch (e) {
       console.error('Chat error:', e);
+      return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  // === GET USAGE INFO ===
+  if (path === '/api/user/usage') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+    const profile = await getUserProfile(env, user.id);
+    if (!profile) return new Response(JSON.stringify({ error: 'Profile not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+
+    const { subscription, usage } = profile;
+    const now = Date.now();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+
+    let freeUsesRemaining = 0;
+    if (subscription.tier === 'free') {
+      if (usage.lastReset && now - usage.lastReset > oneWeekMs) {
+        freeUsesRemaining = 1;
+      } else {
+        freeUsesRemaining = Math.max(0, 1 - usage.freeUses);
+      }
+    } else {
+      freeUsesRemaining = subscription.tier === 'lifetime' ? 999 : 999;
+    }
+
+    return new Response(JSON.stringify({
+      tier: subscription.tier,
+      expiresAt: subscription.expiresAt,
+      freeUsesRemaining: freeUsesRemaining,
+      hasActiveSubscription: subscription.tier !== 'free'
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // === UPDATE SUBSCRIPTION (for future payment integration) ===
+  if (path === '/api/user/subscription' && request.method === 'PUT') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+    try {
+      const body = await request.json();
+      const profile = await getUserProfile(env, user.id);
+      if (!profile) return new Response(JSON.stringify({ error: 'Profile not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+
+      if (body.tier) {
+        profile.subscription.tier = body.tier;
+        profile.subscription.expiresAt = body.expiresAt || null;
+        await saveUserProfile(env, user.id, profile);
+      }
+
+      return new Response(JSON.stringify({ success: true, subscription: profile.subscription }), { headers: { 'Content-Type': 'application/json' } });
+    } catch (e) {
       return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
   }
