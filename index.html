@@ -503,11 +503,14 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
             document.getElementById('user-email').textContent = data.user.email;
             document.getElementById('google-login-btn').style.display = 'none';
             document.getElementById('user-info').style.display = 'block';
-            document.getElementById('auth-overlay').style.display = 'flex';
+            // 登录成功，隐藏 overlay
+            document.getElementById('auth-overlay').style.display = 'none';
           } else {
+            // 未登录，显示 overlay
             document.getElementById('auth-overlay').style.display = 'flex';
           }
         } catch (e) {
+          // 出错也显示 overlay
           document.getElementById('auth-overlay').style.display = 'flex';
         }
       }
