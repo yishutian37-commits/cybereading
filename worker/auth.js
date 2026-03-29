@@ -1,4 +1,4 @@
-// Google OAuth Worker - ES Modules format
+// Google OAuth Worker - ES Modules format with User Profile & History
 const REDIRECT_URI = 'https://cybereading.online/api/auth/callback/google';
 
 const html = `<!DOCTYPE html>
@@ -61,10 +61,54 @@ function getCookie(request, name) {
   return match ? match[2] : null;
 }
 
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2);
+}
+
+// Get or create user profile in KV
+async function getUserProfile(env, userId) {
+  const key = 'user:' + userId;
+  const data = await env.USER_DATA.get(key);
+  if (data) return JSON.parse(data);
+  return null;
+}
+
+async function saveUserProfile(env, userId, profile) {
+  const key = 'user:' + userId;
+  await env.USER_DATA.put(key, JSON.stringify(profile));
+}
+
+// Get user history from KV
+async function getUserHistory(env, userId) {
+  const key = 'history:' + userId;
+  const data = await env.USER_DATA.get(key);
+  if (data) return JSON.parse(data);
+  return [];
+}
+
+async function saveUserHistory(env, userId, history) {
+  const key = 'history:' + userId;
+  await env.USER_DATA.put(key, JSON.stringify(history));
+}
+
+// Require authentication helper
+async function requireAuth(request, env) {
+  const session = getCookie(request, 'session');
+  if (!session) return null;
+  return verifySession(session, env);
+}
+
+// Clean old history entries (older than 7 days)
+function cleanOldHistory(history, daysOld = 7) {
+  const cutoff = Date.now() - (daysOld * 24 * 60 * 60 * 1000);
+  return history.filter(entry => entry.timestamp > cutoff);
+}
+
 async function handleRequest(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
 
+  // === AUTH ROUTES ===
   if (path === '/api/auth/login') {
     const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
       'client_id=' + env.GOOGLE_CLIENT_ID +
@@ -102,18 +146,38 @@ async function handleRequest(request, env) {
       const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
         headers: { Authorization: 'Bearer ' + tokens.access_token }
       });
-      const user = await userRes.json();
+      const googleUser = await userRes.json();
 
-      if (!user.email) {
-        return new Response('Failed to get user info: ' + JSON.stringify(user), { status: 400 });
+      if (!googleUser.email) {
+        return new Response('Failed to get user info', { status: 400 });
       }
 
-      const session = createSession({ id: user.id, name: user.name, email: user.email, picture: user.picture }, env);
+      // Check if user exists in KV, if not create new profile
+      let userProfile = await getUserProfile(env, googleUser.id);
+      if (!userProfile) {
+        userProfile = {
+          id: googleUser.id,
+          name: googleUser.name,
+          nickname: googleUser.name,
+          email: googleUser.email,
+          picture: googleUser.picture,
+          created_at: new Date().toISOString(),
+          settings: {
+            theme: 'dark'
+          }
+        };
+        await saveUserProfile(env, googleUser.id, userProfile);
+      } else {
+        // Update last login time
+        userProfile.last_login = new Date().toISOString();
+        await saveUserProfile(env, googleUser.id, userProfile);
+      }
 
-      console.log('Login success:', user.email, 'Session:', session.substring(0, 20) + '...');
+      const sessionUser = { id: googleUser.id, name: googleUser.name, email: googleUser.email, picture: googleUser.picture };
+      const session = createSession(sessionUser, env);
 
-      // Return simple HTML page showing login result
-      const html = '<!DOCTYPE html><html><head><title>Login Success</title><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/"></head><body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:#fff;"><h1>Login Successful!</h1><p>Welcome, ' + user.name + '</p><p>Redirecting...</p><script>setTimeout(() => window.location.href="/", 2000);</script></body></html>';
+      // Return login success page
+      const html = '<!DOCTYPE html><html><head><title>Login Success</title><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/"></head><body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:#fff;"><h1>Login Successful!</h1><p>Welcome, ' + userProfile.nickname + '</p><p>Redirecting...</p><script>setTimeout(() => window.location.href="/", 2000);</script></body></html>';
       return new Response(html, {
         status: 200,
         headers: {
@@ -128,33 +192,101 @@ async function handleRequest(request, env) {
   }
 
   if (path === '/api/auth/logout') {
-    return new Response(null, {
-      status: 302,
-      headers: {
-        'Location': '/',
-        'Set-Cookie': 'session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Domain=cybereading.online'
-      }
-    });
+    return Response.redirect('/', 302);
   }
 
   if (path === '/api/auth/me') {
-    const session = getCookie(request, 'session');
-    console.log('/api/auth/me called, session:', session ? session.substring(0, 20) + '...' : 'null');
-    if (!session) {
-      const cookies = request.headers.get('cookie');
-      console.log('All cookies:', cookies);
-      return new Response(JSON.stringify({ loggedIn: false, reason: 'no session cookie', allCookies: cookies }), { headers: { 'Content-Type': 'application/json' } });
-    }
-    const user = verifySession(session, env);
-    if (!user) {
-      console.log('Session verification failed');
-      return new Response(JSON.stringify({ loggedIn: false, reason: 'invalid session' }), { headers: { 'Content-Type': 'application/json' } });
-    }
-    console.log('User logged in:', user.email);
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
     return new Response(JSON.stringify({ loggedIn: true, user }), { headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Debug endpoint to show raw cookies
+  // === USER PROFILE ROUTES ===
+  if (path === '/api/user/profile') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+    if (request.method === 'GET') {
+      const profile = await getUserProfile(env, user.id);
+      return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (request.method === 'PUT') {
+      try {
+        const body = await request.json();
+        const profile = await getUserProfile(env, user.id);
+        if (body.nickname) profile.nickname = body.nickname;
+        if (body.settings) profile.settings = { ...profile.settings, ...body.settings };
+        profile.updated_at = new Date().toISOString();
+        await saveUserProfile(env, user.id, profile);
+        return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+  }
+
+  // === USER HISTORY ROUTES ===
+  if (path === '/api/user/history') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+    if (request.method === 'GET') {
+      let history = await getUserHistory(env, user.id);
+      // Clean old entries on read
+      history = cleanOldHistory(history, 7);
+      await saveUserHistory(env, user.id, history);
+      return new Response(JSON.stringify(history), { headers: { 'Content-Type': 'application/json' } });
+    }
+
+    if (request.method === 'POST') {
+      try {
+        const body = await request.json();
+        const history = await getUserHistory(env, user.id);
+        const entry = {
+          id: generateId(),
+          type: body.type || '未知',
+          question: body.question || '',
+          result: body.result || '',
+          timestamp: new Date().toISOString()
+        };
+        history.unshift(entry); // Add to beginning
+        // Keep only last 100 entries
+        const finalHistory = history.length > 100 ? history.slice(0, 100) : history;
+        await saveUserHistory(env, user.id, finalHistory);
+        return new Response(JSON.stringify(entry), { headers: { 'Content-Type': 'application/json' } });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+    }
+  }
+
+  // DELETE /api/user/history/:id
+  if (path.startsWith('/api/user/history/') && request.method === 'DELETE') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+    const id = path.split('/').pop();
+    let history = await getUserHistory(env, user.id);
+    const originalLength = history.length;
+    history = history.filter(entry => entry.id !== id);
+    await saveUserHistory(env, user.id, history);
+    return new Response(JSON.stringify({ deleted: originalLength !== history.length }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // POST /api/user/history/clear
+  if (path === '/api/user/history/clear' && request.method === 'POST') {
+    const user = await requireAuth(request, env);
+    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+    let history = await getUserHistory(env, user.id);
+    const originalLength = history.length;
+    history = cleanOldHistory(history, 7);
+    await saveUserHistory(env, user.id, history);
+    return new Response(JSON.stringify({ cleared: originalLength - history.length }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // === DEBUG ROUTES ===
   if (path === '/api/auth/debug') {
     const cookies = request.headers.get('cookie');
     return new Response(JSON.stringify({ cookies }), { headers: { 'Content-Type': 'application/json' } });

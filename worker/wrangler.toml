@@ -5,3 +5,7 @@ compatibility_date = "2024-01-01"
 routes = [
   { pattern = "cybereading.online/api/*", zone_name = "cybereading.online" }
 ]
+
+[[kv_namespaces]]
+binding = "USER_DATA"
+id = "f1932f0b45864c868898cc6e6ebe1a52"
