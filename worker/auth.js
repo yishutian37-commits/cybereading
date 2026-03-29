@@ -46,18 +46,10 @@ function base64Encode(str) {
   return output;
 }
 
-let SESSION_SECRET = null;
-function getSessionSecret(env) {
-  if (!SESSION_SECRET) {
-    SESSION_SECRET = env.SESSION_SECRET || Math.random().toString(36).substring(2) + Date.now().toString(36);
-  }
-  return SESSION_SECRET;
-}
-
 function createSession(user, env) {
   const payload = JSON.stringify({ user, exp: Date.now() + 86400000 });
   const encoded = base64Encode(payload);
-  const secret = getSessionSecret(env);
+  const secret = env.SESSION_SECRET;
   const signature = btoa(secret + encoded).replace(/=/g, '');
   return encoded + '.' + signature;
 }
@@ -65,7 +57,7 @@ function createSession(user, env) {
 function verifySession(token, env) {
   try {
     const [payload, signature] = token.split('.');
-    const secret = getSessionSecret(env);
+    const secret = env.SESSION_SECRET;
     const expectedSig = btoa(secret + payload).replace(/=/g, '');
     if (signature !== expectedSig) return null;
     const data = JSON.parse(atob(payload));
@@ -98,34 +90,41 @@ async function handleRequest(request, env) {
     const code = url.searchParams.get('code');
     if (!code) return new Response('Missing code', { status: 400 });
 
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: env.GOOGLE_CLIENT_ID,
-        client_secret: env.GOOGLE_CLIENT_SECRET,
-        redirect_uri: REDIRECT_URI,
-        grant_type: 'authorization_code'
-      })
-    });
+    try {
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          code,
+          client_id: env.GOOGLE_CLIENT_ID,
+          client_secret: env.GOOGLE_CLIENT_SECRET,
+          redirect_uri: REDIRECT_URI,
+          grant_type: 'authorization_code'
+        })
+      });
 
-    if (!tokenRes.ok) return new Response('Token exchange failed', { status: 400 });
-
-    const tokens = await tokenRes.json();
-    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { Authorization: 'Bearer ' + tokens.access_token }
-    });
-    const user = await userRes.json();
-    const session = createSession({ id: user.id, name: user.name, email: user.email, picture: user.picture }, env);
-
-    return new Response(null, {
-      status: 302,
-      headers: {
-        'Location': '/',
-        'Set-Cookie': 'session=' + session + '; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400'
+      if (!tokenRes.ok) {
+        return new Response('Token exchange failed: ' + await tokenRes.text(), { status: 400 });
       }
-    });
+
+      const tokens = await tokenRes.json();
+      const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: 'Bearer ' + tokens.access_token }
+      });
+      const user = await userRes.json();
+      const session = createSession({ id: user.id, name: user.name, email: user.email, picture: user.picture }, env);
+
+      // Return HTML page that auto-redirects
+      return new Response('<html><head><meta http-equiv="refresh" content="0;url=/"></head><body><p>Login successful! Redirecting...</p><script>window.location.href="/"</script></body></html>', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html',
+          'Set-Cookie': 'session=' + session + '; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400'
+        }
+      });
+    } catch (e) {
+      return new Response('Callback error: ' + e.message, { status: 500 });
+    }
   }
 
   if (path === '/api/auth/logout') {

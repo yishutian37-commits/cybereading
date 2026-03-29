@@ -5,6 +5,3 @@ compatibility_date = "2024-01-01"
 routes = [
   { pattern = "cybereading.online/api/*", zone_name = "cybereading.online" }
 ]
-
-[vars]
-SESSION_SECRET = "auto-generated-at-runtime"
