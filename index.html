@@ -492,25 +492,34 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
         </div>
       </div>
     </div>
+    <!-- 登录栏 - 登录成功后显示在顶部 -->
+    <div id="user-bar" style="display:none;position:fixed;top:0;left:0;width:100%;background:rgba(0,0,0,0.8);padding:10px 20px;z-index:99999;justify-content:space-between;align-items:center;color:#fff;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <img id="user-bar-avatar" src="" style="width:32px;height:32px;border-radius:50%;border:2px solid rgba(255,255,255,0.3);">
+        <span id="user-bar-name"></span>
+      </div>
+      <a href="/api/auth/logout" style="color:#fff;text-decoration:none;padding:6px 16px;background:rgba(220,53,69,0.9);border-radius:20px;font-size:14px;">退出登录</a>
+    </div>
+
     <script>
       async function checkAuth() {
         try {
           const res = await fetch('/api/auth/me');
           const data = await res.json();
           if (data.loggedIn && data.user) {
-            document.getElementById('user-avatar').src = data.user.picture;
-            document.getElementById('user-name').textContent = '欢迎，' + data.user.name;
-            document.getElementById('user-email').textContent = data.user.email;
-            document.getElementById('google-login-btn').style.display = 'none';
-            document.getElementById('user-info').style.display = 'block';
-            // 登录成功，隐藏 overlay
+            // 登录成功，显示顶部用户栏，隐藏 overlay
+            document.getElementById('user-bar-avatar').src = data.user.picture;
+            document.getElementById('user-bar-name').textContent = '欢迎，' + data.user.name;
+            document.getElementById('user-bar').style.display = 'flex';
             document.getElementById('auth-overlay').style.display = 'none';
           } else {
             // 未登录，显示 overlay
+            document.getElementById('user-bar').style.display = 'none';
             document.getElementById('auth-overlay').style.display = 'flex';
           }
         } catch (e) {
-          // 出错也显示 overlay
+          // 出错显示 overlay
+          document.getElementById('user-bar').style.display = 'none';
           document.getElementById('auth-overlay').style.display = 'flex';
         }
       }
