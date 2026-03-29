@@ -1,0 +1,7 @@
+name = "cybereading-auth"
+main = "auth.js"
+compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "cybereading.online/api/*", zone_name = "cybereading.online" }
+]
