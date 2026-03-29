@@ -345,17 +345,25 @@ ${A.context_injection.constraints.map(c=>`- ${c}`).join(`
 ${r}
 
 ## Output Format Requirements
-You must strictly follow the JSON Schema format below. Do not output any other content:
+You must output a JSON object with the following required fields. Do not output any other content:
 
-\`\`\`json
-${JSON.stringify(A.output_schema,null,2)}
-\`\`\`
+Fields:
+- oracle_type: string, value must be "bazi", "ziwei", or "iching"
+- summary: string, 2-3 sentences destiny summary in user's language
+- destiny_level: number, range 1-10
+- core_element: string, one of: 金 (Metal), 木 (Wood), 水 (Water), 火 (Fire), 土 (Earth)
+- personality: string, personality analysis in user's language
+- career_advice: string, career guidance in user's language
+- love_advice: string, love and relationship advice in user's language
+- lucky_months: string, lucky months description in user's language
+- caution_months: string, months to be cautious in user's language
+- action_advice: string, actionable advice in user's language
+- confidence_score: number, range 0-1
 
-Please ensure:
-1. Output is valid JSON format
-2. All required fields are filled
-3. Field values conform to Schema constraints
-4. Do not output any extra text outside JSON`}function c5(A,e,n,r,s,l,u,c="auto"){const h={bazi:{zh:"八字命理",en:"Bazi (Four Pillars of Destiny)",ja:"八字命理",ko:"팔자명리",auto:"Bazi / 八字命理"},ziwei:{zh:"紫微斗数",en:"Zi Wei Dou Shu (Purple Star Astrology)",ja:"紫微斗数",ko:"자미두수",auto:"Zi Wei Dou Shu / 紫微斗数"},iching:{zh:"易经卜卦",en:"I Ching Divination",ja:"易経占い",ko:"주역점",auto:"I Ching / 易经卜卦"}},d=A.skill_id.split("_")[1],g=h[d][c],m=new Date().getFullYear();return{zh:`当前时间：${m}年
+${A.skill_id.includes("ziwei")?"- main_stars: string, main stars in Destiny Palace in user's language":""}
+${A.skill_id.includes("iching")?"- hexagram_name: string, hexagram name (卦名)\n- hexagram_number: number, range 1-64":""}
+
+Important: Output ONLY valid JSON, no markdown, no explanations, no text outside the JSON object.`}function c5(A,e,n,r,s,l,u,c="auto"){const h={bazi:{zh:"八字命理",en:"Bazi (Four Pillars of Destiny)",ja:"八字命理",ko:"팔자명리",auto:"Bazi / 八字命理"},ziwei:{zh:"紫微斗数",en:"Zi Wei Dou Shu (Purple Star Astrology)",ja:"紫微斗数",ko:"자미두수",auto:"Zi Wei Dou Shu / 紫微斗数"},iching:{zh:"易经卜卦",en:"I Ching Divination",ja:"易経占い",ko:"주역점",auto:"I Ching / 易经卜卦"}},d=A.skill_id.split("_")[1],g=h[d][c],m=new Date().getFullYear();return{zh:`当前时间：${m}年
 
 请为以下求测者进行${g}解读：
 
