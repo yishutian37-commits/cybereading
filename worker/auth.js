@@ -201,6 +201,50 @@ async function handleRequest(request, env) {
     return new Response(JSON.stringify({ loggedIn: true, user }), { headers: { 'Content-Type': 'application/json' } });
   }
 
+  // === CHAT API (GLM Proxy) ===
+  if (path === '/api/chat') {
+    try {
+      const body = await request.json();
+      const { messages, type } = body;
+
+      if (!messages || !Array.isArray(messages)) {
+        return new Response(JSON.stringify({ error: 'Invalid messages' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      // Call GLM API
+      const glmRes = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + env.GLM_API_KEY
+        },
+        body: JSON.stringify({
+          model: 'glm-4-flash',
+          messages: messages,
+          temperature: 0.7,
+          top_p: 0.9
+        })
+      });
+
+      if (!glmRes.ok) {
+        const err = await glmRes.text();
+        console.error('GLM API error:', err);
+        return new Response(JSON.stringify({ error: 'AI service error' }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      const glmData = await glmRes.json();
+      return new Response(JSON.stringify({
+        success: true,
+        reply: glmData.choices[0].message.content,
+        usage: glmData.usage
+      }), { headers: { 'Content-Type': 'application/json' } });
+
+    } catch (e) {
+      console.error('Chat error:', e);
+      return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
   // === USER PROFILE ROUTES ===
   if (path === '/api/user/profile') {
     const user = await requireAuth(request, env);
