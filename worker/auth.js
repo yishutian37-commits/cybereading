@@ -29,21 +29,11 @@ const html = `<!DOCTYPE html>
 </html>`;
 
 function base64Encode(str) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-  let output = '';
-  for (let i = 0; i < str.length; i += 3) {
-    const a = str.charCodeAt(i);
-    const b = str.charCodeAt(i + 1) || 0;
-    const c = str.charCodeAt(i + 2) || 0;
-    const enc1 = a >> 2;
-    const enc2 = ((a & 3) << 4) | (b >> 4);
-    const enc3 = ((b & 15) << 2) | (c >> 6);
-    const enc4 = c & 63;
-    if (isNaN(str.charCodeAt(i + 1))) output += chars.charAt(enc1) + chars.charAt(enc2) + '==';
-    else if (isNaN(str.charCodeAt(i + 2))) output += chars.charAt(enc1) + chars.charAt(enc2) + chars.charAt(enc3) + '=';
-    else output += chars.charAt(enc1) + chars.charAt(enc2) + chars.charAt(enc3) + chars.charAt(enc4);
-  }
-  return output;
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+function base64Decode(str) {
+  return decodeURIComponent(escape(atob(str)));
 }
 
 function createSession(user, env) {
@@ -60,7 +50,7 @@ function verifySession(token, env) {
     const secret = env.SESSION_SECRET;
     const expectedSig = btoa(secret + payload).replace(/=/g, '');
     if (signature !== expectedSig) return null;
-    const data = JSON.parse(atob(payload));
+    const data = JSON.parse(base64Decode(payload));
     if (Date.now() > data.exp) return null;
     return data.user;
   } catch { return null; }
@@ -88,7 +78,7 @@ async function handleRequest(request, env) {
 
   if (path === '/api/auth/callback/google') {
     const code = url.searchParams.get('code');
-    if (!code) return new Response('Missing code', { status: 400 });
+    if (!code) return new Response('Missing code: ' + url, { status: 400 });
 
     try {
       const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -104,7 +94,8 @@ async function handleRequest(request, env) {
       });
 
       if (!tokenRes.ok) {
-        return new Response('Token exchange failed: ' + await tokenRes.text(), { status: 400 });
+        const errText = await tokenRes.text();
+        return new Response('Token exchange failed: ' + errText, { status: 400 });
       }
 
       const tokens = await tokenRes.json();
@@ -112,17 +103,26 @@ async function handleRequest(request, env) {
         headers: { Authorization: 'Bearer ' + tokens.access_token }
       });
       const user = await userRes.json();
+
+      if (!user.email) {
+        return new Response('Failed to get user info: ' + JSON.stringify(user), { status: 400 });
+      }
+
       const session = createSession({ id: user.id, name: user.name, email: user.email, picture: user.picture }, env);
 
-      // Return HTML page that auto-redirects
-      return new Response('<html><head><meta http-equiv="refresh" content="0;url=/"></head><body><p>Login successful! Redirecting...</p><script>window.location.href="/"</script></body></html>', {
+      console.log('Login success:', user.email, 'Session:', session.substring(0, 20) + '...');
+
+      // Return simple HTML page showing login result
+      const html = '<!DOCTYPE html><html><head><title>Login Success</title><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/"></head><body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:#fff;"><h1>Login Successful!</h1><p>Welcome, ' + user.name + '</p><p>Redirecting...</p><script>setTimeout(() => window.location.href="/", 2000);</script></body></html>';
+      return new Response(html, {
         status: 200,
         headers: {
-          'Content-Type': 'text/html',
-          'Set-Cookie': 'session=' + session + '; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400'
+          'Content-Type': 'text/html; charset=utf-8',
+          'Set-Cookie': 'session=' + session + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400; Domain=cybereading.online'
         }
       });
     } catch (e) {
+      console.error('Callback error:', e);
       return new Response('Callback error: ' + e.message, { status: 500 });
     }
   }
@@ -132,17 +132,32 @@ async function handleRequest(request, env) {
       status: 302,
       headers: {
         'Location': '/',
-        'Set-Cookie': 'session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
+        'Set-Cookie': 'session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Domain=cybereading.online'
       }
     });
   }
 
   if (path === '/api/auth/me') {
     const session = getCookie(request, 'session');
-    if (!session) return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
+    console.log('/api/auth/me called, session:', session ? session.substring(0, 20) + '...' : 'null');
+    if (!session) {
+      const cookies = request.headers.get('cookie');
+      console.log('All cookies:', cookies);
+      return new Response(JSON.stringify({ loggedIn: false, reason: 'no session cookie', allCookies: cookies }), { headers: { 'Content-Type': 'application/json' } });
+    }
     const user = verifySession(session, env);
-    if (!user) return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
+    if (!user) {
+      console.log('Session verification failed');
+      return new Response(JSON.stringify({ loggedIn: false, reason: 'invalid session' }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    console.log('User logged in:', user.email);
     return new Response(JSON.stringify({ loggedIn: true, user }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // Debug endpoint to show raw cookies
+  if (path === '/api/auth/debug') {
+    const cookies = request.headers.get('cookie');
+    return new Response(JSON.stringify({ cookies }), { headers: { 'Content-Type': 'application/json' } });
   }
 
   if (path === '/login') {
@@ -151,7 +166,7 @@ async function handleRequest(request, env) {
     const content = user
       ? '<div class="user-info"><img src="' + user.picture + '" alt="' + user.name + '"><h2>欢迎，' + user.name + '</h2><p>' + user.email + '</p><a href="/api/auth/logout" class="logout-btn">退出登录</a></div>'
       : '<div class="login-box"><h1>赛博算命</h1><a href="/api/auth/login" class="google-btn"><svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>使用 Google 登录</a></div>';
-    return new Response(html.replace('{{CONTENT}}', content), { headers: { 'Content-Type': 'text/html' } });
+    return new Response(html.replace('{{CONTENT}}', content), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
   }
 
   return new Response('Not Found', { status: 404 });
