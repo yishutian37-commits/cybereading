@@ -231,19 +231,12 @@ async function handleRequest(request, env) {
       const { subscription, usage } = profile;
       const now = Date.now();
 
-      // Check if free user has remaining uses (reset weekly)
+      // Check if free user has remaining uses (only once, no reset)
       let canUse = false;
-      const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
       let freeUsesRemaining = 0;
 
       if (subscription.tier === 'free') {
-        // Reset free uses if more than a week has passed
-        if (usage.lastReset && now - usage.lastReset > oneWeekMs) {
-          usage.freeUses = 0;
-          usage.lastReset = now;
-          profile.usage = usage;
-          await saveUserProfile(env, user.id, profile);
-        }
+        // 只有一次免费额度，用完就没了（不重置）
         freeUsesRemaining = Math.max(0, 1 - usage.freeUses);
         canUse = freeUsesRemaining > 0;
       } else if (subscription.tier === 'basic' || subscription.tier === 'premium' || subscription.tier === 'lifetime') {
@@ -336,16 +329,11 @@ async function handleRequest(request, env) {
     if (!profile) return new Response(JSON.stringify({ error: 'Profile not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
 
     const { subscription, usage } = profile;
-    const now = Date.now();
-    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
 
     let freeUsesRemaining = 0;
     if (subscription.tier === 'free') {
-      if (usage.lastReset && now - usage.lastReset > oneWeekMs) {
-        freeUsesRemaining = 1;
-      } else {
-        freeUsesRemaining = Math.max(0, 1 - usage.freeUses);
-      }
+      // 只有一次免费额度，用完就没了（不重置）
+      freeUsesRemaining = Math.max(0, 1 - usage.freeUses);
     } else {
       freeUsesRemaining = subscription.tier === 'lifetime' ? 999 : 999;
     }
