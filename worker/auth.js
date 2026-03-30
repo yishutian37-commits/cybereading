@@ -148,18 +148,24 @@ async function handleRequest(request, env) {
 
   // === AUTH ROUTES ===
   if (path === '/api/auth/login') {
+    // Get redirect URL from query param
+    const redirectUrl = url.searchParams.get('redirect') || 'https://cybereading.pages.dev/';
+    const state = encodeURIComponent(redirectUrl);
+
     const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
       'client_id=' + env.GOOGLE_CLIENT_ID +
       '&redirect_uri=' + encodeURIComponent(REDIRECT_URI) +
       '&response_type=code' +
       '&scope=' + encodeURIComponent('openid email profile') +
       '&access_type=offline' +
-      '&prompt=consent';
+      '&prompt=consent' +
+      '&state=' + state;
     return Response.redirect(authUrl, 302);
   }
 
   if (path === '/api/auth/callback/google') {
     const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state'); // Original redirect URL from login
     if (!code) return new Response('Missing code: ' + url, { status: 400 });
 
     try {
@@ -222,10 +228,11 @@ async function handleRequest(request, env) {
       const sessionUser = { id: googleUser.id, name: googleUser.name, email: googleUser.email, picture: googleUser.picture };
       const session = createSession(sessionUser, env);
 
-      // Redirect to pages.dev with token in URL fragment (not query params to avoid being logged)
-      // Use fragment (#) so token doesn't appear in server logs
-      const redirectUrl = `https://cybereading.pages.dev/?token=${encodeURIComponent(session)}&user=${encodeURIComponent(JSON.stringify(sessionUser))}`;
-      return Response.redirect(redirectUrl, 302);
+      // Get target from state (the original redirect URL)
+      const targetUrl = state ? decodeURIComponent(state) : 'https://cybereading.pages.dev/';
+      // Append token and user as query params
+      const finalUrl = `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(session)}&user=${encodeURIComponent(JSON.stringify(sessionUser))}`;
+      return Response.redirect(finalUrl, 302);
     } catch (e) {
       console.error('Callback error:', e);
       return new Response('Callback error: ' + e.message, { status: 500 });
