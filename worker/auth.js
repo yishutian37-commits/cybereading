@@ -200,7 +200,7 @@ async function handleRequest(request, env) {
   }
 
   if (path === '/api/auth/logout') {
-    return Response.redirect('/', 302);
+    return Response.redirect('https://cybereading.pages.dev/', 302);
   }
 
   if (path === '/api/auth/me') {
