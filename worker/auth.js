@@ -91,9 +91,17 @@ async function saveUserHistory(env, userId, history) {
   await env.USER_DATA.put(key, JSON.stringify(history));
 }
 
-// Require authentication helper
+// Require authentication helper - supports both cookie and Bearer token
 async function requireAuth(request, env) {
-  const session = getCookie(request, 'session');
+  // Try cookie first
+  let session = getCookie(request, 'session');
+  // Try Authorization header (for pages.dev requests)
+  if (!session) {
+    const authHeader = request.headers.get('Authorization');
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      session = authHeader.substring(7);
+    }
+  }
   if (!session) return null;
   return verifySession(session, env);
 }
@@ -214,13 +222,19 @@ async function handleRequest(request, env) {
       const sessionUser = { id: googleUser.id, name: googleUser.name, email: googleUser.email, picture: googleUser.picture };
       const session = createSession(sessionUser, env);
 
-      // Return login success page
-      const html = '<!DOCTYPE html><html><head><title>Login Success</title><meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/"></head><body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:#fff;"><h1>Login Successful!</h1><p>Welcome, ' + userProfile.nickname + '</p><p>Redirecting...</p><script>setTimeout(() => window.location.href="/", 2000);</script></body></html>';
+      // Return login success page with token in URL
+      // Store token in localStorage on pages.dev
+      const html = `<!DOCTYPE html><html><head><title>Login Success</title><meta charset="utf-8"><script>
+        // Store token in localStorage
+        localStorage.setItem('oracle_token', '${session}');
+        localStorage.setItem('oracle_user', JSON.stringify(${JSON.stringify(sessionUser)}));
+        // Redirect after storing
+        window.location.href="https://cybereading.pages.dev/";
+      </script></head><body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:#fff;"><h1>Login Successful!</h1><p>Welcome, ${userProfile.nickname}</p><p>Redirecting...</p></body></html>`;
       return new Response(html, {
         status: 200,
         headers: {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Set-Cookie': 'session=' + session + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400; Domain=cybereading.online'
+          'Content-Type': 'text/html; charset=utf-8'
         }
       });
     } catch (e) {
@@ -230,7 +244,16 @@ async function handleRequest(request, env) {
   }
 
   if (path === '/api/auth/logout') {
-    return Response.redirect('https://cybereading.pages.dev/', 302);
+    // Clear localStorage on logout
+    const html = `<!DOCTYPE html><html><head><title>Logout</title><script>
+      localStorage.removeItem('oracle_token');
+      localStorage.removeItem('oracle_user');
+      window.location.href="https://cybereading.pages.dev/";
+    </script></head><body></body></html>`;
+    return new Response(html, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    });
   }
 
   if (path === '/api/auth/me') {

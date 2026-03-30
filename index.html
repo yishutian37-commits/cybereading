@@ -501,7 +501,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           <img id="user-avatar" src="" alt="" style="width:80px;height:80px;border-radius:50%;margin-bottom:20px;border:3px solid rgba(255,255,255,0.3);">
           <h2 id="user-name" style="margin-bottom:10px;"></h2>
           <p id="user-email" style="color:rgba(255,255,255,0.7);margin-bottom:30px;"></p>
-          <a href="/api/auth/logout" style="background:#dc3545;color:#fff;border:none;padding:12px 30px;border-radius:25px;font-size:14px;cursor:pointer;text-decoration:none;">退出登录</a>
+          <a href="javascript:logout()" style="background:#dc3545;color:#fff;border:none;padding:12px 30px;border-radius:25px;font-size:14px;cursor:pointer;text-decoration:none;">退出登录</a>
         </div>
       </div>
     </div>
@@ -512,7 +512,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
         <span id="user-bar-name" style="font-size:14px;"></span>
         <span id="user-bar-uses" style="font-size:11px;padding:2px 8px;background:rgba(102,126,234,0.3);border-radius:10px;"></span>
         <a href="/history" style="color:#fff;text-decoration:none;font-size:14px;padding:4px 12px;background:rgba(255,255,255,0.1);border-radius:15px;">历史</a>
-        <a href="/api/auth/logout" style="color:#fff;text-decoration:none;padding:4px 12px;background:rgba(220,53,69,0.9);border-radius:15px;font-size:14px;">退出</a>
+        <a href="javascript:logout()" style="color:#fff;text-decoration:none;padding:4px 12px;background:rgba(220,53,69,0.9);border-radius:15px;font-size:14px;">退出</a>
         <a href="/user" style="color:#fff;text-decoration:none;font-size:14px;padding:4px 12px;background:rgba(255,255,255,0.1);border-radius:15px;">设置</a>
     </div>
 
@@ -725,26 +725,69 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
       let currentUser = null;
       let currentProfile = null;
 
+      // 获取 token 从 localStorage
+      function getStoredToken() {
+        return localStorage.getItem('oracle_token');
+      }
+
+      // 获取存储的用户信息
+      function getStoredUser() {
+        const userStr = localStorage.getItem('oracle_user');
+        return userStr ? JSON.parse(userStr) : null;
+      }
+
+      // API 请求 helper，自动带上 token
+      async function apiFetch(url, options = {}) {
+        const token = getStoredToken();
+        const headers = {
+          ...options.headers
+        };
+        if (token) {
+          headers['Authorization'] = 'Bearer ' + token;
+        }
+        return fetch(url, { ...options, headers });
+      }
+
       async function checkAuth() {
-        try {
-          const res = await fetch('https://cybereading.online/api/auth/me');
-          const data = await res.json();
-          if (data.loggedIn && data.user) {
-            currentUser = data.user;
-            document.getElementById('user-bar-avatar').src = data.user.picture;
-            document.getElementById('user-bar-name').textContent = '欢迎，' + data.user.name;
-            document.getElementById('user-bar').style.display = 'flex';
-            document.getElementById('auth-overlay').style.display = 'none';
-            // 加载用户资料
-            loadProfile();
-            // 加载并显示使用次数
-            loadUsage();
-          } else {
-            currentUser = null;
-            document.getElementById('user-bar').style.display = 'none';
-            document.getElementById('auth-overlay').style.display = 'flex';
+        // 先检查 localStorage 里有没有用户信息（快速显示）
+        const storedUser = getStoredUser();
+        if (storedUser) {
+          currentUser = storedUser;
+          document.getElementById('user-bar-avatar').src = storedUser.picture || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">👤</text></svg>';
+          document.getElementById('user-bar-name').textContent = '欢迎，' + storedUser.name;
+          document.getElementById('user-bar').style.display = 'flex';
+          document.getElementById('auth-overlay').style.display = 'none';
+          // 异步验证 token 并加载数据
+          loadProfile();
+          loadUsage();
+        }
+
+        // 验证 token（如果 localStorage 有的话）
+        if (getStoredToken()) {
+          try {
+            const res = await apiFetch('https://cybereading.online/api/auth/me');
+            const data = await res.json();
+            if (data.loggedIn && data.user) {
+              currentUser = data.user;
+              localStorage.setItem('oracle_user', JSON.stringify(data.user));
+              document.getElementById('user-bar-avatar').src = data.user.picture;
+              document.getElementById('user-bar-name').textContent = '欢迎，' + data.user.name;
+              document.getElementById('user-bar').style.display = 'flex';
+              document.getElementById('auth-overlay').style.display = 'none';
+              loadProfile();
+              loadUsage();
+            } else {
+              // token 无效，清除
+              localStorage.removeItem('oracle_token');
+              localStorage.removeItem('oracle_user');
+              currentUser = null;
+              document.getElementById('user-bar').style.display = 'none';
+              document.getElementById('auth-overlay').style.display = 'flex';
+            }
+          } catch (e) {
+            // 网络错误，保持显示 localStorage 的用户
           }
-        } catch (e) {
+        } else {
           currentUser = null;
           document.getElementById('user-bar').style.display = 'none';
           document.getElementById('auth-overlay').style.display = 'flex';
@@ -753,7 +796,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 
       async function loadUsage() {
         try {
-          const res = await fetch('https://cybereading.online/api/user/profile');
+          const res = await apiFetch('https://cybereading.online/api/user/profile');
           const profile = await res.json();
           if (profile && profile.usage) {
             const { subscription, usage } = profile;
@@ -777,7 +820,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 
       async function loadProfile() {
         try {
-          const res = await fetch('https://cybereading.online/api/user/profile');
+          const res = await apiFetch('https://cybereading.online/api/user/profile');
           const profile = await res.json();
           currentProfile = profile;
           document.getElementById('profile-avatar').src = profile.picture || currentUser.picture;
@@ -816,7 +859,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           return;
         }
         try {
-          const res = await fetch('https://cybereading.online/api/user/profile', {
+          const res = await apiFetch('https://cybereading.online/api/user/profile', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nickname })
@@ -883,7 +926,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 请以大师的口吻，结合易经/命理知识，给出专业、耐心的解答。回复使用中文，保持神秘而温暖的氛围。`;
 
         try {
-          const res = await fetch('https://cybereading.online/api/chat', {
+          const res = await apiFetch('https://cybereading.online/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -996,6 +1039,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           document.getElementById('pricing-page').style.display = 'none';
           loadHistory();
         } else if (path === '/pricing') {
+          // 定价页不需要登录
           document.getElementById('profile-page').style.display = 'none';
           document.getElementById('history-page').style.display = 'none';
           document.getElementById('divine-page').style.display = 'none';
@@ -1022,6 +1066,13 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
       // 跳转到定价页
       function goToPricing() {
         window.location.href = '/pricing';
+      }
+
+      // 退出登录
+      function logout() {
+        localStorage.removeItem('oracle_token');
+        localStorage.removeItem('oracle_user');
+        window.location.href = 'https://cybereading.online/api/auth/logout';
       }
 
       // 购买点数 (临时 UI，后续接入 PayPal)
