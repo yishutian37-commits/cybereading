@@ -727,7 +727,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 
       async function checkAuth() {
         try {
-          const res = await fetch('/api/auth/me');
+          const res = await fetch('https://cybereading.online/api/auth/me');
           const data = await res.json();
           if (data.loggedIn && data.user) {
             currentUser = data.user;
@@ -753,7 +753,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 
       async function loadUsage() {
         try {
-          const res = await fetch('/api/user/profile');
+          const res = await fetch('https://cybereading.online/api/user/profile');
           const profile = await res.json();
           if (profile && profile.usage) {
             const { subscription, usage } = profile;
@@ -777,7 +777,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 
       async function loadProfile() {
         try {
-          const res = await fetch('/api/user/profile');
+          const res = await fetch('https://cybereading.online/api/user/profile');
           const profile = await res.json();
           currentProfile = profile;
           document.getElementById('profile-avatar').src = profile.picture || currentUser.picture;
@@ -816,7 +816,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           return;
         }
         try {
-          const res = await fetch('/api/user/profile', {
+          const res = await fetch('https://cybereading.online/api/user/profile', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nickname })
@@ -883,7 +883,7 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
 请以大师的口吻，结合易经/命理知识，给出专业、耐心的解答。回复使用中文，保持神秘而温暖的氛围。`;
 
         try {
-          const res = await fetch('/api/chat', {
+          const res = await fetch('https://cybereading.online/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

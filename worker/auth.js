@@ -108,6 +108,36 @@ async function handleRequest(request, env) {
   const url = new URL(request.url);
   const path = url.pathname;
 
+  // CORS headers for pages.dev
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': 'https://cybereading.pages.dev',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true'
+  };
+
+  // Handle CORS preflight
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  // Helper to add CORS to response
+  const withCors = (response) => {
+    const newHeaders = { ...Object.fromEntries(response.headers.entries()), ...corsHeaders };
+    return new Response(response.body, {
+      status: response.status,
+      headers: newHeaders
+    });
+  };
+
+  // Helper for JSON responses with CORS
+  const jsonResponse = (data, options = {}) => {
+    return withCors(new Response(JSON.stringify(data), {
+      headers: { 'Content-Type': 'application/json' },
+      ...options
+    }));
+  };
+
   // === AUTH ROUTES ===
   if (path === '/api/auth/login') {
     const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
@@ -205,27 +235,27 @@ async function handleRequest(request, env) {
 
   if (path === '/api/auth/me') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
-    return new Response(JSON.stringify({ loggedIn: true, user }), { headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ loggedIn: false });
+    return jsonResponse({ loggedIn: true, user });
   }
 
   // === CHAT API (GLM Proxy) ===
   if (path === '/api/chat') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized', requiresAuth: true }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized', requiresAuth: true }, { status: 401 });
 
     try {
       const body = await request.json();
       const { messages, type, question } = body;
 
       if (!messages || !Array.isArray(messages)) {
-        return new Response(JSON.stringify({ error: 'Invalid messages' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse({ error: 'Invalid messages' }, { status: 400 });
       }
 
       // Get user profile for subscription info
       const profile = await getUserProfile(env, user.id);
       if (!profile) {
-        return new Response(JSON.stringify({ error: 'User profile not found' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse({ error: 'User profile not found' }, { status: 400 });
       }
 
       const { subscription, usage } = profile;
@@ -255,12 +285,12 @@ async function handleRequest(request, env) {
       }
 
       if (!canUse) {
-        return new Response(JSON.stringify({
+        return jsonResponse({
           error: 'No remaining uses',
           requiresUpgrade: true,
           freeUsesRemaining: 0,
           tier: subscription.tier
-        }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }, { status: 403 });
       }
 
       // Increment usage
@@ -288,7 +318,7 @@ async function handleRequest(request, env) {
       if (!glmRes.ok) {
         const err = await glmRes.text();
         console.error('GLM API error:', err);
-        return new Response(JSON.stringify({ error: 'AI service error' }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse({ error: 'AI service error' }, { status: 502 });
       }
 
       const glmData = await glmRes.json();
@@ -307,26 +337,26 @@ async function handleRequest(request, env) {
       if (history.length > 100) history.splice(100);
       await saveUserHistory(env, user.id, history);
 
-      return new Response(JSON.stringify({
+      return jsonResponse({
         success: true,
         reply: reply,
         usage: glmData.usage,
         freeUsesRemaining: subscription.tier === 'free' ? Math.max(0, 1 - usage.freeUses) : 999
-      }), { headers: { 'Content-Type': 'application/json' } });
+      });
 
     } catch (e) {
       console.error('Chat error:', e);
-      return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
     }
   }
 
   // === GET USAGE INFO ===
   if (path === '/api/user/usage') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
 
     const profile = await getUserProfile(env, user.id);
-    if (!profile) return new Response(JSON.stringify({ error: 'Profile not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+    if (!profile) return jsonResponse({ error: 'Profile not found' }, { status: 404 });
 
     const { subscription, usage } = profile;
 
@@ -338,23 +368,23 @@ async function handleRequest(request, env) {
       freeUsesRemaining = subscription.tier === 'lifetime' ? 999 : 999;
     }
 
-    return new Response(JSON.stringify({
+    return jsonResponse({
       tier: subscription.tier,
       expiresAt: subscription.expiresAt,
       freeUsesRemaining: freeUsesRemaining,
       hasActiveSubscription: subscription.tier !== 'free'
-    }), { headers: { 'Content-Type': 'application/json' } });
+    });
   }
 
   // === UPDATE SUBSCRIPTION (for future payment integration) ===
   if (path === '/api/user/subscription' && request.method === 'PUT') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
 
     try {
       const body = await request.json();
       const profile = await getUserProfile(env, user.id);
-      if (!profile) return new Response(JSON.stringify({ error: 'Profile not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+      if (!profile) return jsonResponse({ error: 'Profile not found' }, { status: 404 });
 
       if (body.tier) {
         profile.subscription.tier = body.tier;
@@ -362,20 +392,20 @@ async function handleRequest(request, env) {
         await saveUserProfile(env, user.id, profile);
       }
 
-      return new Response(JSON.stringify({ success: true, subscription: profile.subscription }), { headers: { 'Content-Type': 'application/json' } });
+      return jsonResponse({ success: true, subscription: profile.subscription });
     } catch (e) {
-      return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
     }
   }
 
   // === USER PROFILE ROUTES ===
   if (path === '/api/user/profile') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
 
     if (request.method === 'GET') {
       const profile = await getUserProfile(env, user.id);
-      return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
+      return jsonResponse(profile);
     }
 
     if (request.method === 'PUT') {
@@ -386,9 +416,9 @@ async function handleRequest(request, env) {
         if (body.settings) profile.settings = { ...profile.settings, ...body.settings };
         profile.updated_at = new Date().toISOString();
         await saveUserProfile(env, user.id, profile);
-        return new Response(JSON.stringify(profile), { headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse(profile);
       } catch (e) {
-        return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse({ error: 'Invalid request body' }, { status: 400 });
       }
     }
   }
@@ -396,14 +426,14 @@ async function handleRequest(request, env) {
   // === USER HISTORY ROUTES ===
   if (path === '/api/user/history') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
 
     if (request.method === 'GET') {
       let history = await getUserHistory(env, user.id);
       // Clean old entries on read
       history = cleanOldHistory(history, 7);
       await saveUserHistory(env, user.id, history);
-      return new Response(JSON.stringify(history), { headers: { 'Content-Type': 'application/json' } });
+      return jsonResponse(history);
     }
 
     if (request.method === 'POST') {
@@ -421,9 +451,9 @@ async function handleRequest(request, env) {
         // Keep only last 100 entries
         const finalHistory = history.length > 100 ? history.slice(0, 100) : history;
         await saveUserHistory(env, user.id, finalHistory);
-        return new Response(JSON.stringify(entry), { headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse(entry);
       } catch (e) {
-        return new Response(JSON.stringify({ error: 'Invalid request body' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        return jsonResponse({ error: 'Invalid request body' }, { status: 400 });
       }
     }
   }
@@ -431,32 +461,32 @@ async function handleRequest(request, env) {
   // DELETE /api/user/history/:id
   if (path.startsWith('/api/user/history/') && request.method === 'DELETE') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
 
     const id = path.split('/').pop();
     let history = await getUserHistory(env, user.id);
     const originalLength = history.length;
     history = history.filter(entry => entry.id !== id);
     await saveUserHistory(env, user.id, history);
-    return new Response(JSON.stringify({ deleted: originalLength !== history.length }), { headers: { 'Content-Type': 'application/json' } });
+    return jsonResponse({ deleted: originalLength !== history.length });
   }
 
   // POST /api/user/history/clear
   if (path === '/api/user/history/clear' && request.method === 'POST') {
     const user = await requireAuth(request, env);
-    if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
 
     let history = await getUserHistory(env, user.id);
     const originalLength = history.length;
     history = cleanOldHistory(history, 7);
     await saveUserHistory(env, user.id, history);
-    return new Response(JSON.stringify({ cleared: originalLength - history.length }), { headers: { 'Content-Type': 'application/json' } });
+    return jsonResponse({ cleared: originalLength - history.length });
   }
 
   // === DEBUG ROUTES ===
   if (path === '/api/auth/debug') {
     const cookies = request.headers.get('cookie');
-    return new Response(JSON.stringify({ cookies }), { headers: { 'Content-Type': 'application/json' } });
+    return jsonResponse({ cookies });
   }
 
   if (path === '/login') {
