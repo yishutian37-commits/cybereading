@@ -748,7 +748,30 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
         return fetch(url, { ...options, headers });
       }
 
+      // 从 URL 参数读取 token（OAuth callback 时用）
+      function handleOAuthCallback() {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+        const userStr = params.get('user');
+        if (token && userStr) {
+          localStorage.setItem('oracle_token', token);
+          localStorage.setItem('oracle_user', decodeURIComponent(userStr));
+          // 清除 URL 参数
+          window.history.replaceState({}, '', window.location.pathname);
+          return true;
+        }
+        if (params.get('logout') === '1') {
+          localStorage.removeItem('oracle_token');
+          localStorage.removeItem('oracle_user');
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+        return false;
+      }
+
       async function checkAuth() {
+        // 处理 OAuth callback（从 URL 读取 token）
+        handleOAuthCallback();
+
         // 先检查 localStorage 里有没有用户信息（快速显示）
         const storedUser = getStoredUser();
         if (storedUser) {

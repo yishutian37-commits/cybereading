@@ -222,21 +222,10 @@ async function handleRequest(request, env) {
       const sessionUser = { id: googleUser.id, name: googleUser.name, email: googleUser.email, picture: googleUser.picture };
       const session = createSession(sessionUser, env);
 
-      // Return login success page with token in URL
-      // Store token in localStorage on pages.dev
-      const html = `<!DOCTYPE html><html><head><title>Login Success</title><meta charset="utf-8"><script>
-        // Store token in localStorage
-        localStorage.setItem('oracle_token', '${session}');
-        localStorage.setItem('oracle_user', JSON.stringify(${JSON.stringify(sessionUser)}));
-        // Redirect after storing
-        window.location.href="https://cybereading.pages.dev/";
-      </script></head><body style="font-family:Arial;text-align:center;padding:50px;background:#1a1a2e;color:#fff;"><h1>Login Successful!</h1><p>Welcome, ${userProfile.nickname}</p><p>Redirecting...</p></body></html>`;
-      return new Response(html, {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/html; charset=utf-8'
-        }
-      });
+      // Redirect to pages.dev with token in URL fragment (not query params to avoid being logged)
+      // Use fragment (#) so token doesn't appear in server logs
+      const redirectUrl = `https://cybereading.pages.dev/?token=${encodeURIComponent(session)}&user=${encodeURIComponent(JSON.stringify(sessionUser))}`;
+      return Response.redirect(redirectUrl, 302);
     } catch (e) {
       console.error('Callback error:', e);
       return new Response('Callback error: ' + e.message, { status: 500 });
@@ -244,16 +233,8 @@ async function handleRequest(request, env) {
   }
 
   if (path === '/api/auth/logout') {
-    // Clear localStorage on logout
-    const html = `<!DOCTYPE html><html><head><title>Logout</title><script>
-      localStorage.removeItem('oracle_token');
-      localStorage.removeItem('oracle_user');
-      window.location.href="https://cybereading.pages.dev/";
-    </script></head><body></body></html>`;
-    return new Response(html, {
-      status: 200,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
-    });
+    // Redirect to pages.dev with logout indicator
+    return Response.redirect('https://cybereading.pages.dev/?logout=1', 302);
   }
 
   if (path === '/api/auth/me') {
