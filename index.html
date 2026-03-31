@@ -3,6 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Redirect cybereading.online to cybereading.pages.dev
+      if (window.location.hostname === 'cybereading.online') {
+        window.location.href = 'https://cybereading.pages.dev' + window.location.pathname + window.location.search;
+      }
+    </script>
     
     <!-- Primary Meta Tags -->
     <title>东方神谕 | Eastern Oracle - 探索你的命运密码</title>
