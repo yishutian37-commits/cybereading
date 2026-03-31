@@ -120,7 +120,7 @@ async function handleRequest(request, env) {
   const corsHeaders = {
     'Access-Control-Allow-Origin': 'https://cybereading.pages.dev',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Credentials': 'true'
   };
 
@@ -145,6 +145,11 @@ async function handleRequest(request, env) {
       ...options
     }));
   };
+
+  // Root path: redirect to pages.dev
+  if (path === '/' || path === '') {
+    return Response.redirect('https://cybereading.pages.dev/', 302);
+  }
 
   // === AUTH ROUTES ===
   if (path === '/api/auth/login') {
@@ -407,6 +412,176 @@ async function handleRequest(request, env) {
     } catch (e) {
       return jsonResponse({ error: 'Invalid request' }, { status: 400 });
     }
+  }
+
+  // === PAYPAL PAYMENT ===
+  // Sandbox PayPal API base
+  const PAYPAL_API = 'https://api-m.sandbox.paypal.com';
+
+  // Get PayPal Access Token
+  async function getPayPalAccessToken(env) {
+    const clientId = env.PAYPAL_CLIENT_ID;
+    const clientSecret = env.PAYPAL_CLIENT_SECRET;
+    const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+    const res = await fetch(PAYPAL_API + '/v1/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: 'grant_type=client_credentials'
+    });
+
+    const data = await res.json();
+    return data.access_token;
+  }
+
+  // Create PayPal Order
+  if (path === '/api/paypal/create-order' && request.method === 'POST') {
+    const user = await requireAuth(request, env);
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
+
+    try {
+      const body = await request.json();
+      const credits = body.credits; // 1 or 12
+
+      if (!credits || (credits !== 1 && credits !== 12)) {
+        return jsonResponse({ error: 'Invalid credits amount' }, { status: 400 });
+      }
+
+      const amount = credits === 1 ? '0.99' : '9.90';
+      const description = credits === 1 ? '单次占卜 (1 credit)' : '套餐包 (12 credits)';
+
+      const accessToken = await getPayPalAccessToken(env);
+
+      const orderRes = await fetch(PAYPAL_API + '/v2/checkout/orders', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          intent: 'CAPTURE',
+          purchase_units: [{
+            amount: {
+              currency_code: 'USD',
+              value: amount
+            },
+            description: description,
+            custom_id: user.id + ':' + credits // Store userId and credits
+          }]
+        })
+      });
+
+      const order = await orderRes.json();
+
+      if (!orderRes.ok) {
+        console.error('PayPal order creation failed:', order);
+        return jsonResponse({ error: 'Failed to create PayPal order' }, { status: 500 });
+      }
+
+      return jsonResponse({ orderId: order.id, approveUrl: order.links.find(l => l.rel === 'approve').href });
+    } catch (e) {
+      console.error('Create order error:', e);
+      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
+    }
+  }
+
+  // Capture PayPal Order (after user approves payment)
+  if (path === '/api/paypal/capture-order' && request.method === 'POST') {
+    const user = await requireAuth(request, env);
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
+
+    try {
+      const body = await request.json();
+      const orderId = body.orderId;
+
+      if (!orderId) {
+        return jsonResponse({ error: 'Missing orderId' }, { status: 400 });
+      }
+
+      const accessToken = await getPayPalAccessToken(env);
+
+      const captureRes = await fetch(PAYPAL_API + '/v2/checkout/orders/' + orderId + '/capture', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const captureData = await captureRes.json();
+
+      if (!captureRes.ok) {
+        console.error('PayPal capture failed:', captureData);
+        return jsonResponse({ error: 'Failed to capture payment' }, { status: 500 });
+      }
+
+      // Check if payment is successfully captured
+      if (captureData.status === 'COMPLETED') {
+        const customId = captureData.purchase_units[0].payments.captures[0].custom_id;
+        const [userId, credits] = customId.split(':');
+
+        // Verify user matches
+        if (userId !== user.id) {
+          return jsonResponse({ error: 'User mismatch' }, { status: 403 });
+        }
+
+        // Add credits to user
+        const profile = await getUserProfile(env, user.id);
+        if (!profile) return jsonResponse({ error: 'Profile not found' }, { status: 404 });
+
+        profile.credits = (profile.credits || 0) + parseInt(credits);
+        profile.subscription.tier = 'paid';
+        await saveUserProfile(env, user.id, profile);
+
+        return jsonResponse({ success: true, credits: profile.credits });
+      }
+
+      return jsonResponse({ error: 'Payment not completed', status: captureData.status }, { status: 400 });
+    } catch (e) {
+      console.error('Capture order error:', e);
+      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
+    }
+  }
+
+  // PayPal Webhook
+  if (path === '/api/paypal/webhook' && request.method === 'POST') {
+    try {
+      const webhookEvent = await request.json();
+
+      // Verify webhook signature (simplified for sandbox)
+      // In production, you should verify the webhook signature
+      if (webhookEvent.event_type === 'PAYMENT.CAPTURE.COMPLETED') {
+        const customId = webhookEvent.resource.custom_id;
+        if (customId) {
+          const [userId, credits] = customId.split(':');
+          const profile = await getUserProfile(env, userId);
+          if (profile) {
+            profile.credits = (profile.credits || 0) + parseInt(credits);
+            profile.subscription.tier = 'paid';
+            await saveUserProfile(env, userId, profile);
+          }
+        }
+      }
+
+      return jsonResponse({ received: true });
+    } catch (e) {
+      console.error('Webhook error:', e);
+      return jsonResponse({ error: 'Webhook processing failed' }, { status: 400 });
+    }
+  }
+
+  // Get user credits
+  if (path === '/api/user/credits' && request.method === 'GET') {
+    const user = await requireAuth(request, env);
+    if (!user) return jsonResponse({ error: 'Unauthorized' }, { status: 401 });
+
+    const profile = await getUserProfile(env, user.id);
+    if (!profile) return jsonResponse({ error: 'Profile not found' }, { status: 404 });
+
+    return jsonResponse({ credits: profile.credits || 0 });
   }
 
   // === USER PROFILE ROUTES ===

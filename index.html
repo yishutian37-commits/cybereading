@@ -780,6 +780,13 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           return;
         }
 
+        // 处理 PayPal 返回 (在 OAuth 之后)
+        const paypalParams = new URLSearchParams(window.location.search);
+        if (paypalParams.get('token') && paypalParams.get('PayerID')) {
+          handlePayPalReturn();
+          return;
+        }
+
         // 先检查 localStorage 里有没有用户信息（快速显示）
         const storedUser = getStoredUser();
         if (storedUser) {
@@ -1114,10 +1121,66 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
         window.location.href = 'https://cybereading.online/api/auth/logout';
       }
 
-      // 购买点数 (临时 UI，后续接入 PayPal)
-      function purchaseCredits(count) {
+      // 购买点数 (PayPal 沙箱)
+      async function purchaseCredits(count) {
         const amount = count === 1 ? '0.99' : '9.90';
-        alert('PayPal 支付功能开发中\n\n您将购买 ' + count + ' 次占卜，金额 $' + amount + '\n\n请联系开发者完成购买');
+        if (!confirm('确认购买 ' + count + ' 次占卜，金额 $' + amount + '？')) return;
+
+        try {
+          const res = await apiFetch('https://cybereading.online/api/paypal/create-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credits: count })
+          });
+          const data = await res.json();
+
+          if (data.approveUrl) {
+            // 跳转到 PayPal 授权页面
+            window.location.href = data.approveUrl;
+          } else {
+            alert('创建订单失败，请重试');
+          }
+        } catch (e) {
+          console.error('Purchase error:', e);
+          alert('支付出错，请重试');
+        }
+      }
+
+      // 处理 PayPal 返回
+      function handlePayPalReturn() {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token'); // PayPal order ID
+        const PayerID = params.get('PayerID');
+
+        if (token && PayerID && currentUser) {
+          // 捕获订单
+          capturePayPalOrder(token);
+        }
+      }
+
+      // 捕获 PayPal 订单
+      async function capturePayPalOrder(orderId) {
+        try {
+          const res = await apiFetch('https://cybereading.online/api/paypal/capture-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderId: orderId })
+          });
+          const data = await res.json();
+
+          if (data.success) {
+            alert('支付成功！已获得 ' + data.credits + ' 次占卜额度');
+            // 清除 URL 参数
+            window.history.replaceState({}, '', window.location.pathname);
+            // 刷新页面
+            loadUsage();
+          } else {
+            alert('支付验证失败: ' + (data.error || '未知错误'));
+          }
+        } catch (e) {
+          console.error('Capture error:', e);
+          alert('支付验证出错');
+        }
       }
 
       // 监听路由变化

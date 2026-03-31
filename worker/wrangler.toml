@@ -9,3 +9,6 @@ routes = [
 [[kv_namespaces]]
 binding = "USER_DATA"
 id = "f1932f0b45864c868898cc6e6ebe1a52"
+
+# PayPal credentials - set via: wrangler secret put PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET
+# Or in Cloudflare Dashboard > Workers > cybereading-auth > Settings > Variables
