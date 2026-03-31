@@ -1134,11 +1134,13 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           });
           const data = await res.json();
 
+          console.log('Create order response:', res.status, data);
+
           if (data.approveUrl) {
             // 跳转到 PayPal 授权页面
             window.location.href = data.approveUrl;
           } else {
-            alert('创建订单失败，请重试');
+            alert('创建订单失败: ' + (data.error || '未知错误'));
           }
         } catch (e) {
           console.error('Purchase error:', e);
