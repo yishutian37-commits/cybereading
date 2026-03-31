@@ -1091,9 +1091,10 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           // 重置占卜状态
           backToSelect();
         } else {
+          // 根路径 / - 显示首页（占卜选择页）
           document.getElementById('profile-page').style.display = 'none';
           document.getElementById('history-page').style.display = 'none';
-          document.getElementById('divine-page').style.display = 'none';
+          document.getElementById('divine-page').style.display = 'block';
           document.getElementById('pricing-page').style.display = 'none';
         }
       }
