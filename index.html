@@ -1050,8 +1050,10 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
       // 路由处理
       function handleRoute() {
         const path = window.location.pathname;
+        const isLoggedIn = !!currentUser;
+
         if (path === '/user') {
-          if (!currentUser) {
+          if (!isLoggedIn) {
             window.location.href = '/';
             return;
           }
@@ -1059,8 +1061,9 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           document.getElementById('history-page').style.display = 'none';
           document.getElementById('divine-page').style.display = 'none';
           document.getElementById('pricing-page').style.display = 'none';
+          document.getElementById('auth-overlay').style.display = 'none';
         } else if (path === '/history') {
-          if (!currentUser) {
+          if (!isLoggedIn) {
             window.location.href = '/';
             return;
           }
@@ -1068,15 +1071,17 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           document.getElementById('history-page').style.display = 'block';
           document.getElementById('divine-page').style.display = 'none';
           document.getElementById('pricing-page').style.display = 'none';
+          document.getElementById('auth-overlay').style.display = 'none';
           loadHistory();
         } else if (path === '/pricing') {
-          // 定价页不需要登录
+          // 定价页不需要登录，显示定价页，隐藏 auth-overlay
           document.getElementById('profile-page').style.display = 'none';
           document.getElementById('history-page').style.display = 'none';
           document.getElementById('divine-page').style.display = 'none';
           document.getElementById('pricing-page').style.display = 'block';
+          document.getElementById('auth-overlay').style.display = 'none';
         } else if (path === '/divine') {
-          if (!currentUser) {
+          if (!isLoggedIn) {
             window.location.href = '/';
             return;
           }
@@ -1084,14 +1089,16 @@ ${F.rawOutput||"无"}`)}async function m5(A,e,n,r,s,l){try{const u=await g5(A,e,
           document.getElementById('history-page').style.display = 'none';
           document.getElementById('divine-page').style.display = 'block';
           document.getElementById('pricing-page').style.display = 'none';
+          document.getElementById('auth-overlay').style.display = 'none';
           // 重置占卜状态
           backToSelect();
         } else {
-          // 根路径 / - 显示首页（占卜选择页）
+          // 根路径 / - 显示占卜选择页，未登录显示登录遮罩
           document.getElementById('profile-page').style.display = 'none';
           document.getElementById('history-page').style.display = 'none';
           document.getElementById('divine-page').style.display = 'block';
           document.getElementById('pricing-page').style.display = 'none';
+          document.getElementById('auth-overlay').style.display = isLoggedIn ? 'none' : 'flex';
         }
       }
 
