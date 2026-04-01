@@ -422,19 +422,37 @@ async function handleRequest(request, env) {
   async function getPayPalAccessToken(env) {
     const clientId = env.PAYPAL_CLIENT_ID;
     const clientSecret = env.PAYPAL_CLIENT_SECRET;
-    const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
-    const res = await fetch(PAYPAL_API + '/v1/oauth2/token', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: 'grant_type=client_credentials'
-    });
+    if (!clientId || !clientSecret) {
+      console.error('PayPal credentials missing:', { hasClientId: !!clientId, hasClientSecret: !!clientSecret, clientId: clientId });
+      return null;
+    }
 
-    const data = await res.json();
-    return data.access_token;
+    const auth = btoa(`${clientId}:${clientSecret}`);
+    const url = PAYPAL_API + '/v1/oauth2/token';
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Basic ' + auth,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: 'grant_type=client_credentials'
+      });
+
+      const result = await response.json();
+
+      if (result.error) {
+        console.error('PayPal auth error:', result.error, result.error_description);
+        return null;
+      }
+
+      return result.access_token;
+    } catch (err) {
+      console.error('PayPal fetch error:', err.message);
+      return null;
+    }
   }
 
   // Create PayPal Order
@@ -455,6 +473,12 @@ async function handleRequest(request, env) {
 
       const accessToken = await getPayPalAccessToken(env);
 
+      if (!accessToken) {
+        return jsonResponse({ error: 'Payment service unavailable', debug: { clientId: env.PAYPAL_CLIENT_ID ? 'set' : 'missing', secret: env.PAYPAL_CLIENT_SECRET ? 'set' : 'missing' } }, { status: 503 });
+      }
+
+      console.log('Creating PayPal order for user:', user.id, 'credits:', credits);
+
       const orderRes = await fetch(PAYPAL_API + '/v2/checkout/orders', {
         method: 'POST',
         headers: {
@@ -470,21 +494,35 @@ async function handleRequest(request, env) {
             },
             description: description,
             custom_id: user.id + ':' + credits // Store userId and credits
-          }]
+          }],
+          application_context: {
+            return_url: 'https://cybereading.online/pricing?paypal=success',
+            cancel_url: 'https://cybereading.online/pricing?paypal=cancel',
+            brand_name: 'CyberReading',
+            user_action: 'PAY_NOW'
+          }
         })
       });
 
-      const order = await orderRes.json();
-
+      let order;
       if (!orderRes.ok) {
-        console.error('PayPal order creation failed:', order);
-        return jsonResponse({ error: 'Failed to create PayPal order' }, { status: 500 });
+        order = await orderRes.json();
+        console.error('PayPal order creation failed:', orderRes.status, order);
+        return jsonResponse({ error: 'Failed to create PayPal order', details: order }, { status: 500 });
       }
 
-      return jsonResponse({ orderId: order.id, approveUrl: order.links.find(l => l.rel === 'approve').href });
+      order = await orderRes.json();
+      const approveLink = order.links?.find(l => l.rel === 'approve');
+
+      if (!approveLink) {
+        console.error('No approve link in PayPal response:', order);
+        return jsonResponse({ error: 'Invalid PayPal response' }, { status: 500 });
+      }
+
+      return jsonResponse({ orderId: order.id, approveUrl: approveLink.href });
     } catch (e) {
       console.error('Create order error:', e);
-      return jsonResponse({ error: 'Invalid request' }, { status: 400 });
+      return jsonResponse({ error: 'Invalid request', message: e.message }, { status: 400 });
     }
   }
 
