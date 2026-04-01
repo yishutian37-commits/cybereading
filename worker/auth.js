@@ -415,8 +415,8 @@ async function handleRequest(request, env) {
   }
 
   // === PAYPAL PAYMENT ===
-  // Sandbox PayPal API base
-  const PAYPAL_API = 'https://api-m.sandbox.paypal.com';
+  // PayPal API base (Live)
+  const PAYPAL_API = 'https://api-m.paypal.com';
 
   // Get PayPal Access Token
   async function getPayPalAccessToken(env) {
